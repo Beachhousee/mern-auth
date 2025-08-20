@@ -1,9 +1,10 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import userModel from "../models/userModel.js";
+import transporter from "../config/nodemailer.js";
 export const register = async (req, res) => {
   const { name, email, password } = req.body;
-  if (!email || !name || !password) {
+  if (!name || !email || !password) {
     return res.json({ success: false, message: "Missing Details" });
   }
   try {
@@ -12,7 +13,7 @@ export const register = async (req, res) => {
       return res.json({ success: false, message: "User already exists" });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new userModel({ email, password: hashedPassword, email });
+    const user = new userModel({ email, password: hashedPassword, name });
     await user.save();
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
@@ -24,9 +25,19 @@ export const register = async (req, res) => {
       sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
+    // Sending welcome email
+    const mailOptions = {
+      from: process.env.SENDER_EMAIL,
+      to: email,
+      subject: "Welcome to GreatStack",
+      text: `Welcome to greatstack website. Your account has been created with email id: ${email}`,
+    };
+
+    await transporter.sendMail(mailOptions);
+
     return res.json({ success: true });
   } catch (error) {
-    res.json({ success: false, message: "error.message" });
+    res.json({ success: false, message: error.message });
   }
 };
 
@@ -59,3 +70,44 @@ export const login = async (req, res) => {
     return res.json({ success: false, message: error.message });
   }
 };
+
+export const logout = async (req, res) => {
+  try {
+    res.clearCookie("token", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    return res.json({ success: true, message: "Logged Out" });
+  } catch (error) {
+    return res.json({ success: false, message: error.message });
+  }
+};
+
+export const sendVerifyOtp = async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const user = await userModel.findById(userId);
+    if (user.isAccountVerified) {
+      return res.json({ success: false, message: "Account already verified" });
+    }
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    user.verifyOtp = otp;
+    user.verifyOtpExpireAt = Date.now() + 24 * 60 * 60 * 1000;
+    await user.save();
+    const mailOption = {
+      from: process.env.SENDER_EMAIL,
+      to: user.email,
+      subject: "Account Verification OTP",
+      text: `Your OTP is ${otp}. Verify your account using this OTP.`,
+    };
+
+    await transporter.sendMail(mailOption);
+
+    res.json({ success: true, message: "Verification OTP Sent on Email" });
+  } catch (error) {
+    res.json({ success: false, message: error.message });
+  }
+};
+  
